@@ -77,18 +77,25 @@ else
 fi
 
 # --- ask for URLs and password ---------------------------------------------
-# yt-dlp needs a Vimeo login for vimeo.com/<id> pages, but the embed player URL
-# player.vimeo.com/video/<id> works with just the video password.
-to_player_url() {
-  local re='^https?://(www\.)?vimeo\.com/([0-9]+)(/([0-9a-f]{10}))?/?([?#].*)?$'
-  if [[ $1 =~ $re ]]; then
+# Sets PLAYER to the embed player URL and WEB to the vimeo.com page URL.
+# Logged out, yt-dlp can only read the player URL, and the player refuses
+# embed-restricted videos unless the Referer is the vimeo.com page (WEB).
+# With cookies.txt (logged in), yt-dlp reads the WEB page directly.
+vimeo_urls() {
+  local re_web='^https?://(www\.)?vimeo\.com/([0-9]+)(/([0-9a-f]{10}))?/?([?#].*)?$'
+  local re_player='^https?://player\.vimeo\.com/video/([0-9]+)'
+  PLAYER="$1"
+  WEB="$1"
+  if [[ $1 =~ $re_web ]]; then
     if [ -n "${BASH_REMATCH[4]}" ]; then
-      echo "https://player.vimeo.com/video/${BASH_REMATCH[2]}?h=${BASH_REMATCH[4]}"
+      PLAYER="https://player.vimeo.com/video/${BASH_REMATCH[2]}?h=${BASH_REMATCH[4]}"
+      WEB="https://vimeo.com/${BASH_REMATCH[2]}/${BASH_REMATCH[4]}"
     else
-      echo "https://player.vimeo.com/video/${BASH_REMATCH[2]}"
+      PLAYER="https://player.vimeo.com/video/${BASH_REMATCH[2]}"
+      WEB="https://vimeo.com/${BASH_REMATCH[2]}"
     fi
-  else
-    echo "$1"
+  elif [[ $1 =~ $re_player ]]; then
+    WEB="https://vimeo.com/${BASH_REMATCH[1]}"
   fi
 }
 
@@ -96,13 +103,15 @@ echo
 echo "保存したい Vimeo の URL を 1 行ずつ貼り付けて Enter。"
 echo "全部入れたら、何も入力せずに Enter を押してください。"
 urls=()
+webs=()
 while :; do
   read -r -p "URL $(( ${#urls[@]} + 1 )): " u </dev/tty || break
   u="${u//[[:space:]]/}"
   [ -z "$u" ] && break
-  u="$(to_player_url "$u")"
-  echo "    = $u"
-  urls+=("$u")
+  vimeo_urls "$u"
+  echo "    = $PLAYER"
+  urls+=("$PLAYER")
+  webs+=("$WEB")
 done
 
 if [ ${#urls[@]} -eq 0 ]; then
@@ -113,23 +122,38 @@ fi
 read -r -p "Vimeo のパスワード（無ければ空のまま Enter）: " pw </dev/tty
 
 # --- download ----------------------------------------------------------------
+cookies="$PWD/cookies.txt"
 failed=0
 i=0
-for url in "${urls[@]}"; do
+while [ "$i" -lt "${#urls[@]}" ]; do
+  url="${urls[$i]}"
+  web="${webs[$i]}"
   i=$((i + 1))
+  out="$OUT/$i - %(title)s [%(id)s].%(ext)s"
   echo
   echo "[3/3] ${i}/${#urls[@]} 本目をダウンロード中..."
-  "$TOOLS/yt-dlp" "${fmt_args[@]}" \
-    --video-password "$pw" \
-    -N 4 --retries 30 --fragment-retries 100 \
-    -o "$OUT/$i - %(title)s [%(id)s].%(ext)s" \
-    "$url" || failed=1
+  if "$TOOLS/yt-dlp" "${fmt_args[@]}" --video-password "$pw" \
+       --add-headers "Referer:$web" \
+       -N 4 --retries 30 --fragment-retries 100 -o "$out" "$url"; then
+    continue
+  fi
+  if [ -f "$cookies" ]; then
+    echo
+    echo "cookies.txt（Vimeo にログインした状態）で再試行します..."
+    if "$TOOLS/yt-dlp" "${fmt_args[@]}" --video-password "$pw" \
+         --cookies "$cookies" \
+         -N 4 --retries 30 --fragment-retries 100 -o "$out" "$web"; then
+      continue
+    fi
+  fi
+  failed=1
 done
 
 echo
 if [ "$failed" -ne 0 ]; then
-  echo "*** 失敗したものがあります。もう一度このスクリプトを実行すると途中から再開します。"
-  echo "*** 何度やってもダメな場合は README.md の「画面録画」の手順を使ってください。"
+  echo "*** 失敗したものがあります。"
+  echo "*** 次の手: cookies.txt をこのスクリプトと同じ場所に置いて再実行（README.md 参照）。"
+  echo "*** それでもダメなら README.md の「画面録画」の手順を使ってください。"
 else
   echo "完了しました。保存先: $OUT"
 fi

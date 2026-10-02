@@ -45,9 +45,10 @@ set "U="
 set /p "U=URL !NEXT!: "
 if not defined U goto :askpw
 set /a N+=1
-call :toplayer
+call :vimeourls
 echo     = !U!
 set "URL!N!=!U!"
+set "WEB!N!=!WEB!"
 goto :askurl
 
 :askpw
@@ -58,18 +59,26 @@ if %N%==0 (
 set "PW="
 set /p "PW=Vimeo password - leave empty if none: "
 
+set "COOKIES=%~dp0cookies.txt"
 set "FAILED="
 for /l %%i in (1,1,%N%) do (
   echo.
   echo [3/3] Downloading video %%i of %N% ...
-  "%TOOLS%\yt-dlp.exe" --ffmpeg-location "%TOOLS%\ffmpeg\bin" --video-password "!PW!" -S "res:1080,vcodec:h264,acodec:aac" --merge-output-format mp4 -N 4 --retries 30 --fragment-retries 100 -o "%OUT%\%%i - %%(title)s [%%(id)s].%%(ext)s" "!URL%%i!"
-  if errorlevel 1 set "FAILED=1"
+  set "OK="
+  "%TOOLS%\yt-dlp.exe" --ffmpeg-location "%TOOLS%\ffmpeg\bin" --video-password "!PW!" --add-headers "Referer:!WEB%%i!" -S "res:1080,vcodec:h264,acodec:aac" --merge-output-format mp4 -N 4 --retries 30 --fragment-retries 100 -o "%OUT%\%%i - %%(title)s [%%(id)s].%%(ext)s" "!URL%%i!" && set "OK=1"
+  if not defined OK if exist "%COOKIES%" (
+    echo.
+    echo Retrying with cookies.txt - logged-in Vimeo session ...
+    "%TOOLS%\yt-dlp.exe" --ffmpeg-location "%TOOLS%\ffmpeg\bin" --video-password "!PW!" --cookies "%COOKIES%" -S "res:1080,vcodec:h264,acodec:aac" --merge-output-format mp4 -N 4 --retries 30 --fragment-retries 100 -o "%OUT%\%%i - %%(title)s [%%(id)s].%%(ext)s" "!WEB%%i!" && set "OK=1"
+  )
+  if not defined OK set "FAILED=1"
 )
 
 echo.
 if defined FAILED (
-  echo *** Some downloads FAILED. Run this file again - it resumes where it stopped.
-  echo *** If it keeps failing, see README.md for the screen-recording fallback.
+  echo *** Some downloads FAILED.
+  echo *** Next step: put cookies.txt next to this file and run it again - see README.md.
+  echo *** Otherwise use the screen-recording fallback in README.md.
 ) else (
   echo All done. Saved to: !OUT!
 )
@@ -86,20 +95,40 @@ pause
 endlocal
 goto :eof
 
-:toplayer
-rem yt-dlp needs a Vimeo login for vimeo.com/ID pages, but the embed player
-rem URL player.vimeo.com/video/ID works with just the video password.
-set "BASE=" & set "HOST=" & set "ID=" & set "HASH="
+:vimeourls
+rem Sets U to the embed player URL and WEB to the vimeo.com page URL.
+rem Logged out, yt-dlp can only read the player URL, and the player refuses
+rem embed-restricted videos unless the Referer is the vimeo.com page (WEB).
+rem With cookies.txt (logged in), yt-dlp reads the WEB page directly.
+set "WEB=!U!"
+set "BASE=" & set "HOST=" & set "T3=" & set "T4=" & set "ID=" & set "HASH="
 for /f "tokens=1 delims=?#" %%a in ("!U!") do set "BASE=%%a"
-rem The trailing "/-" guarantees a 4th token, so HASH is "-" when there is none.
-for /f "tokens=2,3,4 delims=/" %%a in ("!BASE!/-") do (
+rem The trailing "/-/-" guarantees tokens 3 and 4 exist; "-" means none.
+for /f "tokens=2,3,4 delims=/" %%a in ("!BASE!/-/-") do (
   set "HOST=%%a"
-  set "ID=%%b"
-  set "HASH=%%c"
+  set "T3=%%b"
+  set "T4=%%c"
 )
-if /i not "!HOST!"=="vimeo.com" if /i not "!HOST!"=="www.vimeo.com" goto :eof
+if /i "!HOST!"=="vimeo.com" goto :webform
+if /i "!HOST!"=="www.vimeo.com" goto :webform
+if /i "!HOST!"=="player.vimeo.com" if /i "!T3!"=="video" (
+  set "ID=!T4!"
+  set "HASH=-"
+  goto :checkid
+)
+goto :eof
+:webform
+set "ID=!T3!"
+set "HASH=!T4!"
+:checkid
 if not defined ID goto :eof
+if "!ID!"=="-" goto :eof
 for /f "delims=0123456789" %%x in ("!ID!") do goto :eof
-set "U=https://player.vimeo.com/video/!ID!"
-if not "!HASH!"=="-" set "U=!U!?h=!HASH!"
+if "!HASH!"=="-" (
+  set "WEB=https://vimeo.com/!ID!"
+  if /i not "!HOST!"=="player.vimeo.com" set "U=https://player.vimeo.com/video/!ID!"
+) else (
+  set "WEB=https://vimeo.com/!ID!/!HASH!"
+  set "U=https://player.vimeo.com/video/!ID!?h=!HASH!"
+)
 goto :eof
