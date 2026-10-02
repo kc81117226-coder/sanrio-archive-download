@@ -45,6 +45,8 @@ set "U="
 set /p "U=URL !NEXT!: "
 if not defined U goto :askpw
 set /a N+=1
+call :toplayer
+echo     = !U!
 set "URL!N!=!U!"
 goto :askurl
 
@@ -82,3 +84,22 @@ echo *** Could not download the tools. Check your internet connection and run ag
 echo.
 pause
 endlocal
+goto :eof
+
+:toplayer
+rem yt-dlp needs a Vimeo login for vimeo.com/ID pages, but the embed player
+rem URL player.vimeo.com/video/ID works with just the video password.
+set "BASE=" & set "HOST=" & set "ID=" & set "HASH="
+for /f "tokens=1 delims=?#" %%a in ("!U!") do set "BASE=%%a"
+rem The trailing "/-" guarantees a 4th token, so HASH is "-" when there is none.
+for /f "tokens=2,3,4 delims=/" %%a in ("!BASE!/-") do (
+  set "HOST=%%a"
+  set "ID=%%b"
+  set "HASH=%%c"
+)
+if /i not "!HOST!"=="vimeo.com" if /i not "!HOST!"=="www.vimeo.com" goto :eof
+if not defined ID goto :eof
+for /f "delims=0123456789" %%x in ("!ID!") do goto :eof
+set "U=https://player.vimeo.com/video/!ID!"
+if not "!HASH!"=="-" set "U=!U!?h=!HASH!"
+goto :eof

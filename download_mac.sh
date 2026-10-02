@@ -77,6 +77,21 @@ else
 fi
 
 # --- ask for URLs and password ---------------------------------------------
+# yt-dlp needs a Vimeo login for vimeo.com/<id> pages, but the embed player URL
+# player.vimeo.com/video/<id> works with just the video password.
+to_player_url() {
+  local re='^https?://(www\.)?vimeo\.com/([0-9]+)(/([0-9a-f]{10}))?/?([?#].*)?$'
+  if [[ $1 =~ $re ]]; then
+    if [ -n "${BASH_REMATCH[4]}" ]; then
+      echo "https://player.vimeo.com/video/${BASH_REMATCH[2]}?h=${BASH_REMATCH[4]}"
+    else
+      echo "https://player.vimeo.com/video/${BASH_REMATCH[2]}"
+    fi
+  else
+    echo "$1"
+  fi
+}
+
 echo
 echo "保存したい Vimeo の URL を 1 行ずつ貼り付けて Enter。"
 echo "全部入れたら、何も入力せずに Enter を押してください。"
@@ -85,6 +100,8 @@ while :; do
   read -r -p "URL $(( ${#urls[@]} + 1 )): " u </dev/tty || break
   u="${u//[[:space:]]/}"
   [ -z "$u" ] && break
+  u="$(to_player_url "$u")"
+  echo "    = $u"
   urls+=("$u")
 done
 
